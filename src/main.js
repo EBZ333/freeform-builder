@@ -1,13 +1,13 @@
 /**
- * Freeform Builder - Phase 1: Basic Building
+ * Freeform Builder - Phase 1: Basic Building (Lasso Drawing)
  * 
  * Core systems:
- * - Wall drawing (click + drag)
+ * - Lasso-style wall drawing (continuous chain)
  * - Snapping (strong cardinal, soft diagonal, endpoint)
  * - Floor generation (multiple closed loop detection)
- * - Camera modes (3D orbit + 2D top-down with smooth transition)
+ * - Camera modes (3D orbit + 2D top-down)
  * - Wall selection and deletion
- * - Visual feedback (snap color change, endpoint dot, loop closing)
+ * - Visual feedback (snap color change, loop closing)
  */
 
 import * as THREE from 'three';
@@ -23,11 +23,15 @@ const CONFIG = {
     WALL_THICKNESS: 0.15,
     FLOOR_THICKNESS: 0.1,
     
+    // Lasso Drawing
+    SEGMENT_THRESHOLD: 0.8, // Distance to create new segment while drawing
+    MIN_SEGMENT_LENGTH: 0.3,
+    
     // Snapping
-    SNAP_ANGLE_STEP: Math.PI / 4, // 45° base
+    SNAP_ANGLE_STEP: Math.PI / 4,
     SNAP_DISTANCE: 0.5,
-    SNAP_ANGLE_THRESHOLD: Math.PI / 12, // 15° for 45°
-    SNAP_CARDINAL_THRESHOLD: Math.PI / 24, // 7.5° for 0°/90° (stronger snap)
+    SNAP_ANGLE_THRESHOLD: Math.PI / 12,
+    SNAP_CARDINAL_THRESHOLD: Math.PI / 24,
     
     // Colors
     COLOR_WALL: 0x5a5a5a,
@@ -37,7 +41,7 @@ const CONFIG = {
     COLOR_GRID: 0x333333,
     COLOR_GROUND: 0x1a1a1a,
     COLOR_GHOST_DEFAULT: 0x4fc3f7,
-    COLOR_GHOST_SNAP: 0x7fff7f, // Green-tint when snapping
+    COLOR_GHOST_SNAP: 0x7fff7f,
     
     // Camera
     CAM_3D_POS: new THREE.Vector3(15, 12, 15),
@@ -50,23 +54,22 @@ const CONFIG = {
 
 const state = {
     mode: 'wall', // 'wall' | 'edit'
-    cameraMode: '3d', // '3d' | '2d'
+    cameraMode: '3d',
     snapping: true,
     
-    // Interaction
+    // Lasso Drawing State
     isDrawing: false,
-    dragStart: null,
-    dragCurrent: null,
-    isSnapping: false, // Track if currently snapping
+    drawPoints: [], // Array of Vector3 points in the current chain
+    pendingWalls: [], // Temp wall meshes being drawn
     
     // Selection
     hoveredWall: null,
     selectedWall: null,
     
     // Data
-    walls: [], // Array of wall objects
-    floors: [], // Array of floor meshes
-    wallSegments: [], // Array of {start: Vector3, end: Vector3, wallId}
+    walls: [], // Permanent wall meshes
+    floors: [],
+    wallSegments: [], // {start, end, wallId}
 };
 
 // ============================================
@@ -105,7 +108,7 @@ let cameraTransition = {
     startZoom: 1,
     targetZoom: 1,
     progress: 0,
-    duration: 0.4 // seconds
+    duration: 0.4
 };
 
 // Controls
@@ -138,7 +141,6 @@ scene.add(dirLight);
 // TERRAIN & GRID
 // ============================================
 
-// Ground plane
 const groundGeo = new THREE.PlaneGeometry(100, 100);
 const groundMat = new THREE.MeshStandardMaterial({ 
     color: CONFIG.COLOR_GROUND,
@@ -150,20 +152,18 @@ ground.rotation.x = -Math.PI / 2;
 ground.receiveShadow = true;
 scene.add(ground);
 
-// Grid helper
 const gridHelper = new THREE.GridHelper(100, 100, CONFIG.COLOR_GRID, CONFIG.COLOR_GRID);
 gridHelper.material.opacity = 0.3;
 gridHelper.material.transparent = true;
 scene.add(gridHelper);
 
-// Invisible plane for raycasting
 const raycastPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 
 // ============================================
 // PREVIEW OBJECTS
 // ============================================
 
-// Ghost wall during drawing
+// Current segment being drawn
 const ghostWallGeo = new THREE.BoxGeometry(1, CONFIG.WALL_HEIGHT, CONFIG.WALL_THICKNESS);
 const ghostWallMat = new THREE.MeshBasicMaterial({
     color: CONFIG.COLOR_GHOST_DEFAULT,
@@ -175,16 +175,6 @@ const ghostWall = new THREE.Mesh(ghostWallGeo, ghostWallMat);
 ghostWall.visible = false;
 ghostWall.position.y = CONFIG.WALL_HEIGHT / 2;
 scene.add(ghostWall);
-
-// Ghost line
-const ghostLineGeo = new THREE.BufferGeometry();
-const ghostLineMat = new THREE.LineBasicMaterial({ 
-    color: CONFIG.COLOR_GHOST_DEFAULT,
-    linewidth: 2
-});
-const ghostLine = new THREE.Line(ghostLineGeo, ghostLineMat);
-ghostLine.visible = false;
-scene.add(ghostLine);
 
 // Snap indicator
 const snapIndicatorGeo = new THREE.RingGeometry(0.15, 0.25, 32);
@@ -199,19 +189,7 @@ snapIndicator.rotation.x = -Math.PI / 2;
 snapIndicator.visible = false;
 scene.add(snapIndicator);
 
-// Endpoint dot (follows cursor while drawing)
-const endpointDotGeo = new THREE.SphereGeometry(0.12, 16, 16);
-const endpointDotMat = new THREE.MeshBasicMaterial({ 
-    color: CONFIG.COLOR_GHOST_DEFAULT,
-    transparent: true,
-    opacity: 0.8,
-    depthWrite: false
-});
-const endpointDot = new THREE.Mesh(endpointDotGeo, endpointDotMat);
-endpointDot.visible = false;
-scene.add(endpointDot);
-
-// Start point indicator (for loop closing)
+// Start point indicator
 const startPointGeo = new THREE.RingGeometry(0.2, 0.3, 32);
 const startPointMat = new THREE.MeshBasicMaterial({ 
     color: 0xffff00,
@@ -232,29 +210,42 @@ selectionBox.visible = false;
 scene.add(selectionBox);
 
 // ============================================
-// WALL MANAGEMENT
+// WALL CREATION
 // ============================================
 
-function createWallMesh(start, end, id) {
+function createWallMesh(start, end, id, isGhost = false) {
     const direction = new THREE.Vector3().subVectors(end, start);
     const length = direction.length();
     const center = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
     
     const geometry = new THREE.BoxGeometry(length, CONFIG.WALL_HEIGHT, CONFIG.WALL_THICKNESS);
-    const material = new THREE.MeshStandardMaterial({
-        color: CONFIG.COLOR_WALL,
-        roughness: 0.7,
-        metalness: 0.2
-    });
+    
+    let material;
+    if (isGhost) {
+        material = new THREE.MeshBasicMaterial({
+            color: CONFIG.COLOR_GHOST_DEFAULT,
+            transparent: true,
+            opacity: 0.5,
+            depthWrite: false
+        });
+    } else {
+        material = new THREE.MeshStandardMaterial({
+            color: CONFIG.COLOR_WALL,
+            roughness: 0.7,
+            metalness: 0.2
+        });
+    }
     
     const wall = new THREE.Mesh(geometry, material);
     wall.position.copy(center);
     wall.position.y = CONFIG.WALL_HEIGHT / 2;
     wall.lookAt(end);
-    wall.castShadow = true;
-    wall.receiveShadow = true;
     
-    // Store data on the mesh
+    if (!isGhost) {
+        wall.castShadow = true;
+        wall.receiveShadow = true;
+    }
+    
     wall.userData = {
         type: 'wall',
         start: start.clone(),
@@ -265,29 +256,41 @@ function createWallMesh(start, end, id) {
     return wall;
 }
 
-function addWall(start, end) {
+function commitWall(start, end) {
     const id = Date.now() + Math.random();
-    const wall = createWallMesh(start, end, id);
+    const wall = createWallMesh(start, end, id, false);
     scene.add(wall);
     
     state.walls.push(wall);
     state.wallSegments.push({ start: start.clone(), end: end.clone(), wallId: id });
     
-    updateDebugPanel();
-    regenerateAllFloors();
+    return wall;
+}
+
+function createPendingWall(start, end) {
+    const id = 'pending_' + Date.now() + Math.random();
+    const wall = createWallMesh(start, end, id, true);
+    scene.add(wall);
+    state.pendingWalls.push(wall);
+    return wall;
+}
+
+function clearPendingWalls() {
+    state.pendingWalls.forEach(wall => {
+        scene.remove(wall);
+        wall.geometry.dispose();
+        wall.material.dispose();
+    });
+    state.pendingWalls = [];
 }
 
 function deleteWall(wall) {
     if (!wall) return;
     
-    // Remove from scene
     scene.remove(wall);
-    
-    // Clean up
     wall.geometry.dispose();
     wall.material.dispose();
     
-    // Remove from arrays
     const wallIndex = state.walls.indexOf(wall);
     if (wallIndex > -1) {
         state.walls.splice(wallIndex, 1);
@@ -298,18 +301,16 @@ function deleteWall(wall) {
         state.wallSegments.splice(segIndex, 1);
     }
     
-    // Clear selection
     if (state.selectedWall === wall) {
         state.selectedWall = null;
         selectionBox.visible = false;
     }
     
-    updateDebugPanel();
     regenerateAllFloors();
+    updateDebugPanel();
 }
 
 function selectWall(wall) {
-    // Deselect previous
     if (state.selectedWall && state.selectedWall !== wall) {
         state.selectedWall.material.color.setHex(CONFIG.COLOR_WALL);
     }
@@ -336,7 +337,6 @@ function getVertexKey(v) {
 function findAllClosedLoops() {
     if (state.wallSegments.length < 2) return [];
     
-    // Build graph
     const vertices = new Map();
     const edges = [];
     
@@ -350,7 +350,6 @@ function findAllClosedLoops() {
         edges.push([k1, k2]);
     });
     
-    // Build adjacency
     const adj = new Map();
     vertices.forEach((_, key) => adj.set(key, []));
     
@@ -362,7 +361,6 @@ function findAllClosedLoops() {
     const foundLoops = [];
     const processedStarts = new Set();
     
-    // Find smallest cycle from each vertex
     vertices.forEach((_, startKey) => {
         if (processedStarts.has(startKey)) return;
         
@@ -374,13 +372,10 @@ function findAllClosedLoops() {
             const neighbors = adj.get(current);
             for (const neighbor of neighbors) {
                 if (path.length > 2 && neighbor === startKey) {
-                    // Found a cycle
                     const loop = [...path];
                     foundLoops.push(loop);
-                    
-                    // Mark all vertices in this loop as processed
                     loop.forEach(k => processedStarts.add(k));
-                    return; // Found smallest cycle from this start
+                    return;
                 }
                 
                 if (!visited.has(neighbor) && path.length < 15) {
@@ -410,7 +405,6 @@ function generateFloorFromLoop(loopKeys) {
     const points = loopKeys.map(key => vertices.get(key));
     if (points.some(p => !p)) return null;
     
-    // Create shape
     const shape = new THREE.Shape();
     shape.moveTo(points[0].x, points[0].z);
     
@@ -465,29 +459,23 @@ function regenerateAllFloors() {
 // SNAPPING SYSTEM
 // ============================================
 
-function snapPoint(point, referencePoint) {
-    if (!state.snapping) {
-        state.isSnapping = false;
-        return point.clone();
-    }
+function snapPoint(point, referencePoint, checkEndpoints = true) {
+    if (!state.snapping) return { point: point.clone(), didSnap: false };
     
     let snapped = point.clone();
     let didSnap = false;
     
-    // Angle snapping relative to reference point
+    // Angle snapping
     if (referencePoint) {
         const direction = new THREE.Vector3().subVectors(point, referencePoint);
         const angle = Math.atan2(direction.z, direction.x);
         const distance = direction.length();
         
-        // Find nearest snap angle (multiples of 45°)
         const snapAngle = Math.round(angle / CONFIG.SNAP_ANGLE_STEP) * CONFIG.SNAP_ANGLE_STEP;
         const angleDiff = Math.abs(angle - snapAngle);
         
-        // Check if cardinal (0°, 90°, 180°, 270°)
         const cardinalAngle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
         const isCardinal = Math.abs(snapAngle - cardinalAngle) < 0.001;
-        
         const threshold = isCardinal ? CONFIG.SNAP_CARDINAL_THRESHOLD : CONFIG.SNAP_ANGLE_THRESHOLD;
         
         if (angleDiff < threshold || angleDiff > Math.PI * 2 - threshold) {
@@ -498,42 +486,32 @@ function snapPoint(point, referencePoint) {
     }
     
     // Endpoint snapping
-    const snapCandidates = [];
-    state.wallSegments.forEach(seg => {
-        snapCandidates.push(seg.start, seg.end);
-    });
-    
-    for (const candidate of snapCandidates) {
-        const dist = Math.sqrt(
-            Math.pow(snapped.x - candidate.x, 2) + 
-            Math.pow(snapped.z - candidate.z, 2)
-        );
+    if (checkEndpoints) {
+        const snapCandidates = [];
+        state.wallSegments.forEach(seg => {
+            snapCandidates.push(seg.start, seg.end);
+        });
+        // Also check start point of current drawing
+        if (state.drawPoints.length > 0) {
+            snapCandidates.push(state.drawPoints[0]);
+        }
         
-        if (dist < CONFIG.SNAP_DISTANCE) {
-            snapped.x = candidate.x;
-            snapped.z = candidate.z;
-            didSnap = true;
-            break;
+        for (const candidate of snapCandidates) {
+            const dist = Math.sqrt(
+                Math.pow(snapped.x - candidate.x, 2) + 
+                Math.pow(snapped.z - candidate.z, 2)
+            );
+            
+            if (dist < CONFIG.SNAP_DISTANCE) {
+                snapped.x = candidate.x;
+                snapped.z = candidate.z;
+                didSnap = true;
+                break;
+            }
         }
     }
     
-    state.isSnapping = didSnap;
-    return snapped;
-}
-
-function updateGhostVisuals(length) {
-    // Color change when snapping
-    if (state.isSnapping) {
-        ghostWall.material.color.setHex(CONFIG.COLOR_GHOST_SNAP);
-        ghostLine.material.color.setHex(CONFIG.COLOR_GHOST_SNAP);
-        snapIndicator.material.color.setHex(CONFIG.COLOR_GHOST_SNAP);
-        endpointDot.material.color.setHex(CONFIG.COLOR_GHOST_SNAP);
-    } else {
-        ghostWall.material.color.setHex(CONFIG.COLOR_GHOST_DEFAULT);
-        ghostLine.material.color.setHex(CONFIG.COLOR_GHOST_DEFAULT);
-        snapIndicator.material.color.setHex(CONFIG.COLOR_GHOST_DEFAULT);
-        endpointDot.material.color.setHex(CONFIG.COLOR_GHOST_DEFAULT);
-    }
+    return { point: snapped, didSnap };
 }
 
 // ============================================
@@ -565,6 +543,143 @@ function getWallIntersection(clientX, clientY) {
 }
 
 // ============================================
+// LASSO DRAWING
+// ============================================
+
+function startDrawing(point) {
+    state.isDrawing = true;
+    state.drawPoints = [point.clone()];
+    
+    controls.enabled = false;
+    
+    // Show start indicator
+    startPointIndicator.position.set(point.x, 0.05, point.z);
+    startPointIndicator.visible = true;
+    startPointIndicator.material.color.setHex(0xffff00);
+    startPointIndicator.scale.set(1, 1, 1);
+    
+    // Show ghost wall for first segment
+    ghostWall.visible = true;
+    
+    updateDebugPanel();
+}
+
+function updateDrawing(currentPoint) {
+    if (!state.isDrawing || state.drawPoints.length === 0) return;
+    
+    const lastPoint = state.drawPoints[state.drawPoints.length - 1];
+    
+    // Snap the current point
+    const { point: snappedPoint, didSnap } = snapPoint(currentPoint, lastPoint);
+    
+    // Update visual feedback
+    snapIndicator.position.set(snappedPoint.x, 0.06, snappedPoint.z);
+    snapIndicator.visible = didSnap;
+    
+    if (didSnap) {
+        ghostWall.material.color.setHex(CONFIG.COLOR_GHOST_SNAP);
+        snapIndicator.material.color.setHex(CONFIG.COLOR_GHOST_SNAP);
+    } else {
+        ghostWall.material.color.setHex(CONFIG.COLOR_GHOST_DEFAULT);
+        snapIndicator.material.color.setHex(CONFIG.COLOR_GHOST_DEFAULT);
+    }
+    
+    // Check if we should create a new segment
+    const distFromLast = lastPoint.distanceTo(snappedPoint);
+    
+    if (distFromLast >= CONFIG.SEGMENT_THRESHOLD) {
+        // Commit the segment from lastPoint to snappedPoint
+        createPendingWall(lastPoint, snappedPoint);
+        state.drawPoints.push(snappedPoint.clone());
+    }
+    
+    // Update ghost wall from last committed point to current
+    const direction = new THREE.Vector3().subVectors(snappedPoint, lastPoint);
+    const length = direction.length();
+    
+    if (length > 0.01) {
+        const center = new THREE.Vector3().addVectors(lastPoint, snappedPoint).multiplyScalar(0.5);
+        ghostWall.scale.set(Math.max(length, 0.1), 1, 1);
+        ghostWall.position.copy(center);
+        ghostWall.position.y = CONFIG.WALL_HEIGHT / 2;
+        ghostWall.lookAt(snappedPoint);
+        ghostWall.visible = true;
+    } else {
+        ghostWall.visible = false;
+    }
+    
+    // Check for loop closing (near start point)
+    if (state.drawPoints.length > 2) {
+        const distToStart = snappedPoint.distanceTo(state.drawPoints[0]);
+        if (distToStart < CONFIG.SNAP_DISTANCE) {
+            startPointIndicator.material.color.setHex(0x00ff00);
+            startPointIndicator.scale.set(1.5, 1.5, 1.5);
+        } else {
+            startPointIndicator.material.color.setHex(0xffff00);
+            startPointIndicator.scale.set(1, 1, 1);
+        }
+    }
+}
+
+function finishDrawing() {
+    if (!state.isDrawing) return;
+    
+    state.isDrawing = false;
+    controls.enabled = true;
+    
+    // Commit all pending walls
+    state.pendingWalls.forEach(wall => {
+        const start = wall.userData.start;
+        const end = wall.userData.end;
+        
+        // Remove ghost
+        scene.remove(wall);
+        wall.geometry.dispose();
+        wall.material.dispose();
+        
+        // Create real wall
+        commitWall(start, end);
+    });
+    
+    // Check if we should close the loop
+    if (state.drawPoints.length > 2) {
+        const lastPoint = state.drawPoints[state.drawPoints.length - 1];
+        const firstPoint = state.drawPoints[0];
+        const distToStart = lastPoint.distanceTo(firstPoint);
+        
+        if (distToStart < CONFIG.SNAP_DISTANCE && distToStart > CONFIG.MIN_SEGMENT_LENGTH) {
+            // Close the loop
+            commitWall(lastPoint, firstPoint);
+        }
+    }
+    
+    // Clear state
+    state.pendingWalls = [];
+    state.drawPoints = [];
+    ghostWall.visible = false;
+    snapIndicator.visible = false;
+    startPointIndicator.visible = false;
+    
+    regenerateAllFloors();
+    updateDebugPanel();
+}
+
+function cancelDrawing() {
+    if (!state.isDrawing) return;
+    
+    state.isDrawing = false;
+    controls.enabled = true;
+    
+    // Clear all pending walls
+    clearPendingWalls();
+    
+    state.drawPoints = [];
+    ghostWall.visible = false;
+    snapIndicator.visible = false;
+    startPointIndicator.visible = false;
+}
+
+// ============================================
 // INTERACTION HANDLERS
 // ============================================
 
@@ -575,21 +690,10 @@ function onMouseDown(event) {
     if (state.mode === 'wall') {
         const point = getGroundIntersection(event.clientX, event.clientY);
         if (point) {
-            state.isDrawing = true;
-            state.dragStart = snapPoint(point, null);
-            state.dragCurrent = state.dragStart.clone();
-            controls.enabled = false;
-            
-            // Show start point indicator
-            startPointIndicator.position.set(state.dragStart.x, 0.05, state.dragStart.z);
-            startPointIndicator.visible = true;
-            
-            ghostWall.visible = true;
-            ghostLine.visible = true;
-            endpointDot.visible = true;
+            const { point: snappedPoint } = snapPoint(point, null, true);
+            startDrawing(snappedPoint);
         }
     } else if (state.mode === 'edit') {
-        // Click to select wall
         const wall = getWallIntersection(event.clientX, event.clientY);
         selectWall(wall);
     }
@@ -598,55 +702,9 @@ function onMouseDown(event) {
 function onMouseMove(event) {
     const point = getGroundIntersection(event.clientX, event.clientY);
     
-    if (state.isDrawing && state.dragStart && point) {
-        state.dragCurrent = snapPoint(point, state.dragStart);
-        
-        const direction = new THREE.Vector3().subVectors(state.dragCurrent, state.dragStart);
-        const length = direction.length();
-        const center = new THREE.Vector3().addVectors(state.dragStart, state.dragCurrent).multiplyScalar(0.5);
-        
-        updateGhostVisuals(length);
-        
-        if (length > 0.01) {
-            ghostWall.scale.set(length, 1, 1);
-            ghostWall.position.copy(center);
-            ghostWall.position.y = CONFIG.WALL_HEIGHT / 2;
-            ghostWall.lookAt(state.dragCurrent);
-            ghostWall.visible = true;
-            
-            // Ghost line
-            const positions = new Float32Array([
-                state.dragStart.x, 0.05, state.dragStart.z,
-                state.dragCurrent.x, 0.05, state.dragCurrent.z
-            ]);
-            ghostLine.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-            ghostLine.visible = true;
-            
-            // Endpoint dot
-            endpointDot.position.set(state.dragCurrent.x, 0.1, state.dragCurrent.z);
-            endpointDot.visible = true;
-            
-            // Snap indicator
-            if (state.snapping) {
-                snapIndicator.position.set(state.dragCurrent.x, 0.06, state.dragCurrent.z);
-                snapIndicator.visible = state.isSnapping;
-            }
-            
-            // Check if near start point (loop closing feedback)
-            const distToStart = state.dragCurrent.distanceTo(state.dragStart);
-            if (distToStart < CONFIG.SNAP_DISTANCE && length > 1.0) {
-                startPointIndicator.material.color.setHex(0x00ff00);
-                startPointIndicator.scale.set(1.5, 1.5, 1.5);
-            } else {
-                startPointIndicator.material.color.setHex(0xffff00);
-                startPointIndicator.scale.set(1, 1, 1);
-            }
-        } else {
-            ghostWall.visible = false;
-            ghostLine.visible = false;
-        }
+    if (state.isDrawing) {
+        updateDrawing(point);
     } else if (state.mode === 'edit') {
-        // Hover effect
         const wall = getWallIntersection(event.clientX, event.clientY);
         
         if (state.hoveredWall && state.hoveredWall !== state.selectedWall) {
@@ -663,49 +721,18 @@ function onMouseMove(event) {
 
 function onMouseUp(event) {
     if (state.isDrawing) {
-        state.isDrawing = false;
-        controls.enabled = true;
-        
-        ghostWall.visible = false;
-        ghostLine.visible = false;
-        snapIndicator.visible = false;
-        endpointDot.visible = false;
-        startPointIndicator.visible = false;
-        
-        if (state.dragStart && state.dragCurrent) {
-            const length = state.dragStart.distanceTo(state.dragCurrent);
-            if (length > 0.2) {
-                addWall(state.dragStart, state.dragCurrent);
-            }
-        }
-        
-        state.dragStart = null;
-        state.dragCurrent = null;
-        state.isSnapping = false;
+        finishDrawing();
     }
 }
 
 function onKeyDown(event) {
-    // Escape cancels current draw
     if (event.key === 'Escape') {
         if (state.isDrawing) {
-            state.isDrawing = false;
-            controls.enabled = true;
-            
-            ghostWall.visible = false;
-            ghostLine.visible = false;
-            snapIndicator.visible = false;
-            endpointDot.visible = false;
-            startPointIndicator.visible = false;
-            
-            state.dragStart = null;
-            state.dragCurrent = null;
-            state.isSnapping = false;
+            cancelDrawing();
         }
         return;
     }
     
-    // Delete removes selected wall
     if (event.key === 'Delete' || event.key === 'Backspace') {
         if (state.selectedWall) {
             deleteWall(state.selectedWall);
@@ -796,7 +823,6 @@ function updateDebugPanel() {
 // ============================================
 
 function clearAll() {
-    // Remove all walls
     state.walls.forEach(wall => {
         scene.remove(wall);
         wall.geometry.dispose();
@@ -829,7 +855,6 @@ window.addEventListener('resize', () => {
 // UI Event Listeners
 document.getElementById('mode-wall').addEventListener('click', () => {
     state.mode = 'wall';
-    // Deselect when switching to wall mode
     if (state.selectedWall) {
         state.selectedWall.material.color.setHex(CONFIG.COLOR_WALL);
         state.selectedWall = null;
@@ -882,4 +907,4 @@ updateUI();
 updateDebugPanel();
 animate();
 
-console.log('Freeform Builder - Phase 1 initialized');
+console.log('Freeform Builder - Phase 1 (Lasso Drawing) initialized');
