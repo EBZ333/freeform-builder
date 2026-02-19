@@ -235,44 +235,127 @@ Appears on selection:
 
 ---
 
+## Design Notes & Clarifications
+
+### Platform & Distribution
+- **Web-only** — Runs in browser
+- No plans for desktop/mobile unless desired later
+
+### Save / Load
+- **Timing**: Early Phase 2
+- **Implementation**: Simple data object stored in localStorage
+- **Optional**: Copy/paste text save string
+- **Scope**: "Save your build and load it later" — no complex formats
+
+### Performance Targets
+- Don't define strict limits
+- Optimize only when lag appears
+- Rough expectation: A few hundred walls should be fine
+- **Decision**: No optimization planning yet
+
+### Undo / Redo
+- Add in Phase 2
+- Basic stack tracking actions (add wall, delete wall, etc.)
+- No perfect edge-case handling required
+
+### Multiplayer / Sharing
+- Not part of this project
+- No online features, no collaboration
+
+### Export / Import
+- Not necessary unless personally desired later
+- Screenshots only if anything
+
+### Wall Drawing Specifications
+- **Thickness**: Extruded walls (keep current implementation)
+- **Minimum Length**: ~0.2 units
+- **Snapping**: Strong pull to 0°/90°, softer pull to 45°
+
+### Floor Generation Scope (Phase 1)
+- **Supports**: Multiple separate buildings
+- **Not Needed**: Holes/courtyards
+- Keep loop detection simple
+
+### Wall Editing
+- Move entirely to Phase 2
+- Phase 1: Drawing only
+
+### Visual Feedback (Phase 1)
+- **Include**: Preview line while drawing, clear snap indication
+- **Skip**: Measurements, labels, numbers
+
+### Starting State
+- Empty scene with hint: "Click and drag to draw walls"
+
+### Height Control
+- Fixed wall height in Phase 1
+- Adjustable height comes later
+
+### Technical Direction
+- **Geometry**: One mesh per wall, don't optimize yet
+- **Loop Detection**: Basic, works for simple closed shapes
+- **Camera**: Add simple smoothing between 3D/2D modes
+
+---
+
 ## Development Phases
 
 ### Phase 1 — Basic Building
 
+**Goal**: Core drawing loop with clear feedback and automatic floor generation.
+
 **Systems:**
-- Terrain
-- Camera (3D + 2D toggle)
-- Wall drawing
-- Basic snapping
-- Closed loop detection
-- Automatic floors
+- Terrain (flat ground with grid)
+- Camera (3D orbit + 2D top-down toggle with smooth transition)
+- Wall drawing (click + drag)
+- Basic snapping (strong 0°/90°, soft 45°, endpoint snapping)
+- Closed loop detection (simple, supports multiple buildings)
+- Automatic floors (generated inside closed wall loops)
+- Visual feedback (preview line, snap indicator)
 
-**Player Capability:**
-- Draw building outlines
-- Create straight or angled walls with snapping
-- Use top-down mode for precision
-- Generate floors automatically
-- Adjust wall height
+**Player Can:**
+- Click and drag to draw walls
+- Create clean shapes with snapping
+- Make multiple separate building outlines
+- Automatically get floors inside closed shapes
+- Switch between 3D and top-down view smoothly
+- See clear feedback while drawing
 
-**Result:** Complete basic enclosed structures
+**Player Cannot:**
+- Edit walls after placing them
+- Build multiple floors
+- Add doors/windows
+- Modify floor shapes
+- Save/load
+
+**Result:** Functional drawing sandbox with immediate visual feedback
+
+**Wall Specs:**
+- Thickness: 0.15 units (extruded)
+- Height: Fixed at 2.5 units
+- Minimum length: 0.2 units
+- Snap distance: 0.5 units
 
 ---
 
-### Phase 2 — Editing and Iteration
+### Phase 2 — Editing, Save/Load, and Iteration
+
+**Goal**: Make buildings editable and persistent.
 
 **Systems:**
-- Wall reshaping
-- Endpoint editing
-- Dynamic floor updates
-- Multiple structures
-- Snapping toggle
+- Move wall points (basic editing)
+- Undo/redo stack (basic action tracking)
+- Simple save/load (localStorage, optional text export)
+- Dynamic floor updates when walls change
+- Snapping toggle in UI
 
-**Player Capability:**
-- Modify structures freely
-- Expand and reshape layouts
-- Build multiple connected forms
+**Player Can:**
+- Draw something
+- Fix mistakes with undo/redo
+- Modify wall positions after placing
+- Come back to it later (save/load)
 
-**Result:** Flexible, non-destructive building
+**Result:** Flexible, non-destructive building with persistence
 
 ---
 

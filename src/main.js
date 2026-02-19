@@ -22,9 +22,10 @@ const CONFIG = {
     FLOOR_THICKNESS: 0.1,
     
     // Snapping
-    SNAP_ANGLE_STEP: Math.PI / 4, // 45°
+    SNAP_ANGLE_STEP: Math.PI / 4, // 45° base
     SNAP_DISTANCE: 0.5,
-    SNAP_ANGLE_THRESHOLD: Math.PI / 12, // 15°
+    SNAP_ANGLE_THRESHOLD: Math.PI / 12, // 15° for 45°
+    SNAP_CARDINAL_THRESHOLD: Math.PI / 24, // 7.5° for 0°/90° (stronger snap)
     
     // Colors
     COLOR_WALL: 0x5a5a5a,
@@ -90,6 +91,17 @@ const camera = new THREE.PerspectiveCamera(
 );
 camera.position.copy(CONFIG.CAM_3D_POS);
 camera.lookAt(0, 0, 0);
+
+// Camera transition state
+let cameraTransition = {
+    active: false,
+    startPos: new THREE.Vector3(),
+    targetPos: new THREE.Vector3(),
+    startZoom: 1,
+    targetZoom: 1,
+    progress: 0,
+    duration: 0.4 // seconds
+};
 
 // Controls
 const controls = new OrbitControls(camera, renderer.domElement);
@@ -370,12 +382,23 @@ function snapPoint(point, referencePoint) {
         const angle = Math.atan2(direction.z, direction.x);
         const distance = direction.length();
         
-        // Find nearest snap angle
+        // Normalize angle to 0-2π
+        let normalizedAngle = angle;
+        if (normalizedAngle < 0) normalizedAngle += Math.PI * 2;
+        
+        // Find nearest snap angle (multiples of 45°)
         const snapAngle = Math.round(angle / CONFIG.SNAP_ANGLE_STEP) * CONFIG.SNAP_ANGLE_STEP;
         const angleDiff = Math.abs(angle - snapAngle);
         
-        if (angleDiff < CONFIG.SNAP_ANGLE_THRESHOLD || 
-            angleDiff > Math.PI * 2 - CONFIG.SNAP_ANGLE_THRESHOLD) {
+        // Check if this is a cardinal angle (0°, 90°, 180°, 270°)
+        // Cardinal angles are multiples of 90° (PI/2)
+        const cardinalAngle = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
+        const isCardinal = Math.abs(snapAngle - cardinalAngle) < 0.001;
+        
+        // Use stronger threshold for cardinal angles (0°, 90°)
+        const threshold = isCardinal ? CONFIG.SNAP_CARDINAL_THRESHOLD : CONFIG.SNAP_ANGLE_THRESHOLD;
+        
+        if (angleDiff < threshold || angleDiff > Math.PI * 2 - threshold) {
             snapped.x = referencePoint.x + Math.cos(snapAngle) * distance;
             snapped.z = referencePoint.z + Math.sin(snapAngle) * distance;
         }
@@ -492,7 +515,7 @@ function onMouseUp(event) {
         
         if (state.dragStart && state.dragCurrent) {
             const length = state.dragStart.distanceTo(state.dragCurrent);
-            if (length > 0.3) { // Minimum wall length
+            if (length > 0.2) { // Minimum wall length
                 addWall(state.dragStart, state.dragCurrent);
             }
         }
@@ -507,31 +530,68 @@ function onMouseUp(event) {
 // ============================================
 
 function setCameraMode(mode) {
+    if (state.cameraMode === mode) return;
+    
     state.cameraMode = mode;
     
+    // Start transition
+    cameraTransition.active = true;
+    cameraTransition.startPos.copy(camera.position);
+    cameraTransition.startZoom = camera.zoom;
+    cameraTransition.progress = 0;
+    
     if (mode === '2d') {
-        // Smooth transition to top-down
-        camera.position.copy(CONFIG.CAM_2D_POS);
-        camera.lookAt(0, 0, 0);
-        camera.zoom = 1.5;
+        cameraTransition.targetPos.copy(CONFIG.CAM_2D_POS);
+        cameraTransition.targetZoom = 1.5;
         
-        controls.minPolarAngle = 0;
-        controls.maxPolarAngle = 0;
         controls.enableRotate = false;
     } else {
-        // 3D mode
-        camera.position.copy(CONFIG.CAM_3D_POS);
-        camera.lookAt(0, 0, 0);
-        camera.zoom = 1;
+        cameraTransition.targetPos.copy(CONFIG.CAM_3D_POS);
+        cameraTransition.targetZoom = 1;
         
-        controls.minPolarAngle = 0;
-        controls.maxPolarAngle = Math.PI / 2 - 0.05;
         controls.enableRotate = true;
     }
     
-    camera.updateProjectionMatrix();
-    controls.update();
     updateUI();
+}
+
+function updateCameraTransition(deltaTime) {
+    if (!cameraTransition.active) return;
+    
+    cameraTransition.progress += deltaTime / cameraTransition.duration;
+    
+    if (cameraTransition.progress >= 1) {
+        cameraTransition.progress = 1;
+        cameraTransition.active = false;
+        
+        // Set final polar angle constraints
+        if (state.cameraMode === '2d') {
+            controls.minPolarAngle = 0;
+            controls.maxPolarAngle = 0.001; // Nearly 0, allows controls to work
+        } else {
+            controls.minPolarAngle = 0;
+            controls.maxPolarAngle = Math.PI / 2 - 0.05;
+        }
+    }
+    
+    // Ease in-out cubic
+    const t = cameraTransition.progress;
+    const ease = t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+    
+    // Interpolate position
+    camera.position.lerpVectors(
+        cameraTransition.startPos,
+        cameraTransition.targetPos,
+        ease
+    );
+    
+    // Interpolate zoom
+    camera.zoom = cameraTransition.startZoom + 
+        (cameraTransition.targetZoom - cameraTransition.startZoom) * ease;
+    camera.updateProjectionMatrix();
+    
+    // Always look at center during transition
+    camera.lookAt(0, 0, 0);
 }
 
 // ============================================
@@ -614,8 +674,15 @@ document.getElementById('clear-all').addEventListener('click', clearAll);
 // ANIMATION LOOP
 // ============================================
 
-function animate() {
+let lastTime = 0;
+
+function animate(currentTime) {
     requestAnimationFrame(animate);
+    
+    const deltaTime = (currentTime - lastTime) / 1000;
+    lastTime = currentTime;
+    
+    updateCameraTransition(deltaTime);
     controls.update();
     renderer.render(scene, camera);
 }

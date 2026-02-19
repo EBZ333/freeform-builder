@@ -149,6 +149,26 @@ body {
     cursor: pointer;
 }
 
+#hint-text {
+    position: fixed;
+    bottom: 60px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(20, 20, 25, 0.9);
+    padding: 12px 24px;
+    border-radius: 8px;
+    font-size: 0.9rem;
+    color: #aaa;
+    pointer-events: none;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    animation: fadeInOut 8s ease-in-out forwards;
+}
+
+@keyframes fadeInOut {
+    0%, 100% { opacity: 0; }
+    10%, 90% { opacity: 1; }
+}
+
 #debug-panel {
     position: fixed;
     bottom: 20px;
