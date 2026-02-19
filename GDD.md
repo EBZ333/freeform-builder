@@ -309,20 +309,23 @@ Appears on selection:
 - Camera (3D orbit + 2D top-down toggle with smooth transition)
 - Wall drawing (click + drag)
 - Basic snapping (strong 0°/90°, soft 45°, endpoint snapping)
-- Closed loop detection (simple, supports multiple buildings)
-- Automatic floors (generated inside closed wall loops)
-- Visual feedback (preview line, snap indicator)
+- Closed loop detection (**multiple loops supported**)
+- Automatic floors (generated inside all closed wall loops, real-time updates)
+- Visual feedback (preview line, snap indicator, color changes)
 
 **Player Can:**
 - Click and drag to draw walls
 - Create clean shapes with snapping
-- Make multiple separate building outlines
+- **Make multiple separate building outlines** (each gets its own floor)
+- **Draw freely (overlapping/crossing walls allowed)**
+- **Delete individual walls** (click + Delete key)
+- **Cancel current draw** with Escape key
 - Automatically get floors inside closed shapes
 - Switch between 3D and top-down view smoothly
 - See clear feedback while drawing
 
 **Player Cannot:**
-- Edit walls after placing them
+- Edit wall positions after placing
 - Build multiple floors
 - Add doors/windows
 - Modify floor shapes
@@ -335,6 +338,17 @@ Appears on selection:
 - Height: Fixed at 2.5 units
 - Minimum length: 0.2 units
 - Snap distance: 0.5 units
+
+**Visual Feedback Details:**
+- Ghost wall: Cyan (#4fc3f7) default, shifts toward white/green when snapping
+- Preview line shows current drag
+- Snap indicator appears at snap points
+- Endpoint dot visible while drawing
+- Starting point highlights when about to close a loop
+
+**Performance:**
+- Floor updates happen immediately (no debounce)
+- Optimize only if visible lag occurs
 
 ---
 
