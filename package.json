@@ -1,0 +1,20 @@
+{
+  "name": "freeform-builder",
+  "version": "1.0.0",
+  "description": "A freeform 3D builder using WebGL and Three.js",
+  "main": "index.html",
+  "scripts": {
+    "start": "npx serve .",
+    "dev": "npx serve . -p 3000"
+  },
+  "keywords": [
+    "webgl",
+    "three.js",
+    "3d",
+    "builder",
+    "freeform"
+  ],
+  "author": "EBZ333",
+  "license": "MIT",
+  "devDependencies": {}
+}

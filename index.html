@@ -1,0 +1,51 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Freeform Builder</title>
+    <link rel="stylesheet" href="src/style.css">
+</head>
+<body>
+    <div id="ui-container">
+        <div id="toolbar">
+            <h1>Freeform Builder</h1>
+            <div class="tool-section">
+                <h3>Shapes</h3>
+                <button id="add-cube" class="tool-btn">Cube</button>
+                <button id="add-sphere" class="tool-btn">Sphere</button>
+                <button id="add-cylinder" class="tool-btn">Cylinder</button>
+                <button id="add-cone" class="tool-btn">Cone</button>
+            </div>
+            <div class="tool-section">
+                <h3>Actions</h3>
+                <button id="clear-all" class="tool-btn danger">Clear All</button>
+                <button id="random-colors" class="tool-btn">Random Colors</button>
+            </div>
+            <div class="tool-section">
+                <h3>Controls</h3>
+                <p>Left Click: Select/Deselect</p>
+                <p>Drag: Move Object</p>
+                <p>Scroll: Zoom</p>
+                <p>Right Click: Pan</p>
+                <p>Delete: Remove Selected</p>
+            </div>
+            <div id="object-info" class="hidden">
+                <h3>Selected Object</h3>
+                <p>Type: <span id="selected-type">-</span></p>
+                <button id="delete-selected" class="tool-btn danger">Delete</button>
+            </div>
+        </div>
+    </div>
+    <canvas id="gl-canvas"></canvas>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <script type="module" src="src/main.js"></script>
+</body>
+</html>
