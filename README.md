@@ -1,58 +1,91 @@
 # Freeform Builder
 
-A freeform 3D builder application using WebGL and Three.js. Create, manipulate, and arrange 3D shapes in your browser.
+A freeform building sandbox where players sketch structures by dragging walls, automatically generating floors, and shaping architecture through direct manipulation.
 
-![Freeform Builder](assets/preview.png)
+![Phase 1](assets/preview.png)
 
-## Features
+## Core Philosophy
 
-- 🎨 **Add Shapes**: Create cubes, spheres, cylinders, and cones
-- 🖱️ **Interactive Controls**: Drag to move objects, orbit camera, zoom and pan
-- 🎯 **Selection System**: Click to select, delete to remove
-- 🌈 **Random Colors**: Randomize colors of all objects
-- ⚡ **Real-time Rendering**: Smooth 60fps WebGL rendering
+- **Draw, don't assemble** — Sketch structures naturally
+- **Everything remains editable** — Nothing is permanently baked
+- **Minimal friction between idea and result** — Instant feedback
+- **Soft constraints instead of rigid rules** — Guide, don't restrict
+- **Clarity and responsiveness over realism** — Feel good first
 
-## Live Demo
+## Current Phase: Phase 1 — Basic Building
 
-Open `index.html` in a modern web browser or serve it with a local server.
+### Implemented Systems
+- ✅ Terrain (flat ground with grid)
+- ✅ Camera (3D orbit + 2D top-down toggle)
+- ✅ Wall drawing (click + drag)
+- ✅ Basic snapping (0°, 45°, 90° angles, endpoint snapping)
+- ✅ Closed loop detection (naive implementation)
+- ✅ Automatic floor generation
 
-## Getting Started
+### Player Capabilities
+- Draw building outlines by dragging walls
+- Create straight or angled walls with angle snapping
+- Use top-down mode for precision work
+- Floors generate automatically inside closed walls
 
-### Option 1: Direct Open
-Simply open `index.html` in your browser.
+## Quick Start
 
-### Option 2: Local Server
 ```bash
-# Using npm
-npm start
+# Run with Python
+python3 -m http.server 8080
 
-# Or using Python
-python -m http.server 8000
-
-# Or using Node.js serve
+# Or with Node
 npx serve .
+
+# Or simply open index.html in a browser
 ```
 
-Then navigate to `http://localhost:8000` (or the port shown).
+Then navigate to `http://localhost:8080`
 
 ## Controls
 
-| Action | Control |
-|--------|---------|
-| Add Shapes | Use the toolbar buttons |
-| Select Object | Left click on object |
-| Move Object | Drag selected object |
-| Orbit Camera | Right click + drag |
-| Zoom | Scroll wheel |
-| Pan | Right click + drag (when not selecting) |
-| Delete Selected | Press `Delete` or use toolbar button |
-| Clear All | Use "Clear All" button |
+| Action | Input |
+|--------|-------|
+| Draw Wall | Left Click + Drag |
+| Orbit Camera | Right Click + Drag |
+| Pan | Middle Click + Drag |
+| Zoom | Scroll Wheel |
+| Toggle 2D/3D | UI Button |
+| Toggle Snapping | UI Checkbox |
+| Clear All | UI Button |
 
-## Technologies
+## Architecture
 
-- [Three.js](https://threejs.org/) - 3D WebGL library
-- ES6 Modules - Modern JavaScript
-- CSS3 - Styling and UI
+### Tech Stack
+- **Three.js** — 3D rendering
+- **ES6 Modules** — Modern JavaScript
+- **Vanilla CSS** — Styling
+
+### Project Structure
+```
+freeform-builder/
+├── index.html          # Entry point
+├── GDD.md              # Full game design document
+├── README.md           # This file
+├── src/
+│   ├── main.js         # Main application
+│   └── style.css       # Styles
+└── assets/             # Images, models, etc.
+```
+
+## Development Phases
+
+| Phase | Focus | Status |
+|-------|-------|--------|
+| Phase 1 | Basic Building (walls, floors, camera) | 🚧 In Progress |
+| Phase 2 | Editing and Iteration | 📋 Planned |
+| Phase 3 | Vertical Building + Visibility | 📋 Planned |
+| Phase 4 | Floor Sculpting | 📋 Planned |
+| Phase 5 | Doors, Windows, Section View | 📋 Planned |
+| Phase 6 | Stairs, Railings, Columns | 📋 Planned |
+| Phase 7 | Polish and Refinement | 📋 Planned |
+
+See [GDD.md](GDD.md) for full design document.
 
 ## Browser Support
 
@@ -63,7 +96,7 @@ Then navigate to `http://localhost:8000` (or the port shown).
 
 ## License
 
-MIT License - feel free to use this project for any purpose!
+MIT License
 
 ---
 

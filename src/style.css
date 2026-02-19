@@ -5,10 +5,10 @@
 }
 
 body {
-    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
     overflow: hidden;
-    background: #1a1a1a;
-    color: #fff;
+    background: #0a0a0a;
+    color: #e0e0e0;
 }
 
 #gl-canvas {
@@ -27,88 +27,140 @@ body {
 
 #toolbar {
     pointer-events: auto;
-    background: rgba(30, 30, 30, 0.95);
-    backdrop-filter: blur(10px);
+    background: rgba(20, 20, 25, 0.95);
+    backdrop-filter: blur(12px);
     padding: 20px;
-    width: 250px;
+    width: 260px;
     height: 100vh;
     overflow-y: auto;
-    border-right: 1px solid rgba(255, 255, 255, 0.1);
+    border-right: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 #toolbar h1 {
-    font-size: 1.5rem;
-    margin-bottom: 20px;
+    font-size: 1.4rem;
+    font-weight: 600;
+    margin-bottom: 4px;
+    color: #fff;
+    letter-spacing: -0.5px;
+}
+
+.phase-badge {
+    font-size: 0.75rem;
     color: #4fc3f7;
-    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 20px;
+    padding-bottom: 15px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
 }
 
 .tool-section {
     margin-bottom: 20px;
     padding-bottom: 20px;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.tool-section:last-of-type {
+    border-bottom: none;
 }
 
 .tool-section h3 {
-    font-size: 0.9rem;
-    margin-bottom: 10px;
-    color: #aaa;
+    font-size: 0.75rem;
+    margin-bottom: 12px;
+    color: #888;
     text-transform: uppercase;
-    letter-spacing: 1px;
+    letter-spacing: 1.5px;
+    font-weight: 600;
 }
 
 .tool-section p {
     font-size: 0.8rem;
-    color: #888;
-    margin: 5px 0;
+    color: #aaa;
+    margin: 8px 0;
+    line-height: 1.4;
+}
+
+.tool-section p strong {
+    color: #ddd;
+    font-weight: 500;
+}
+
+.tool-section .hint {
+    font-size: 0.7rem;
+    color: #666;
+    margin-top: 8px;
 }
 
 .tool-btn {
     display: block;
     width: 100%;
-    padding: 10px 15px;
-    margin: 5px 0;
-    background: #2d2d2d;
+    padding: 10px 14px;
+    margin: 6px 0;
+    background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    color: #fff;
+    color: #ccc;
     cursor: pointer;
-    border-radius: 6px;
-    font-size: 0.9rem;
-    transition: all 0.2s ease;
+    border-radius: 8px;
+    font-size: 0.85rem;
+    font-weight: 500;
+    transition: all 0.15s ease;
 }
 
 .tool-btn:hover {
-    background: #3d3d3d;
-    border-color: #4fc3f7;
+    background: rgba(255, 255, 255, 0.1);
+    border-color: rgba(255, 255, 255, 0.2);
+    color: #fff;
 }
 
 .tool-btn:active {
     transform: scale(0.98);
 }
 
+.tool-btn.active {
+    background: rgba(79, 195, 247, 0.15);
+    border-color: rgba(79, 195, 247, 0.4);
+    color: #4fc3f7;
+}
+
 .tool-btn.danger {
-    background: #5c2626;
+    background: rgba(244, 67, 54, 0.1);
+    border-color: rgba(244, 67, 54, 0.3);
+    color: #ff6b6b;
 }
 
 .tool-btn.danger:hover {
-    background: #7a3333;
-    border-color: #ff6b6b;
+    background: rgba(244, 67, 54, 0.2);
+    border-color: rgba(244, 67, 54, 0.5);
 }
 
-#object-info {
-    background: rgba(79, 195, 247, 0.1);
-    border: 1px solid rgba(79, 195, 247, 0.3);
-    border-radius: 6px;
-    padding: 15px;
+.toggle {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    cursor: pointer;
+    font-size: 0.85rem;
+    color: #bbb;
 }
 
-#object-info.hidden {
-    display: none;
+.toggle input[type="checkbox"] {
+    width: 18px;
+    height: 18px;
+    accent-color: #4fc3f7;
+    cursor: pointer;
 }
 
-#selected-type {
-    color: #4fc3f7;
-    font-weight: bold;
+#debug-panel {
+    position: fixed;
+    bottom: 20px;
+    left: 280px;
+    background: rgba(20, 20, 25, 0.9);
+    padding: 10px 16px;
+    border-radius: 8px;
+    font-size: 0.8rem;
+    color: #888;
+    display: flex;
+    gap: 20px;
+    border: 1px solid rgba(255, 255, 255, 0.08);
 }
 
 /* Scrollbar styling */
@@ -117,14 +169,14 @@ body {
 }
 
 #toolbar::-webkit-scrollbar-track {
-    background: rgba(255, 255, 255, 0.05);
+    background: transparent;
 }
 
 #toolbar::-webkit-scrollbar-thumb {
-    background: rgba(255, 255, 255, 0.2);
+    background: rgba(255, 255, 255, 0.15);
     border-radius: 3px;
 }
 
 #toolbar::-webkit-scrollbar-thumb:hover {
-    background: rgba(255, 255, 255, 0.3);
+    background: rgba(255, 255, 255, 0.25);
 }
