@@ -1,13 +1,12 @@
 /**
- * Freeform Builder - Phase 1: Basic Building (Lasso Drawing)
+ * Freeform Builder - Phase 1: Basic Building (Extruded Wall Drawing)
  * 
  * Core systems:
- * - Lasso-style wall drawing (continuous chain)
+ * - Draw continuous paths that get extruded into walls
  * - Snapping (strong cardinal, soft diagonal, endpoint)
  * - Floor generation (multiple closed loop detection)
  * - Camera modes (3D orbit + 2D top-down)
  * - Wall selection and deletion
- * - Visual feedback (snap color change, loop closing)
  */
 
 import * as THREE from 'three';
@@ -23,9 +22,8 @@ const CONFIG = {
     WALL_THICKNESS: 0.15,
     FLOOR_THICKNESS: 0.1,
     
-    // Lasso Drawing
-    SEGMENT_THRESHOLD: 0.8, // Distance to create new segment while drawing
-    MIN_SEGMENT_LENGTH: 0.3,
+    // Drawing
+    MIN_POINT_DISTANCE: 0.3, // Minimum distance between path points
     
     // Snapping
     SNAP_ANGLE_STEP: Math.PI / 4,
@@ -40,7 +38,7 @@ const CONFIG = {
     COLOR_FLOOR: 0x4a4a4a,
     COLOR_GRID: 0x333333,
     COLOR_GROUND: 0x1a1a1a,
-    COLOR_GHOST_DEFAULT: 0x4fc3f7,
+    COLOR_GHOST: 0x4fc3f7,
     COLOR_GHOST_SNAP: 0x7fff7f,
     
     // Camera
@@ -53,23 +51,21 @@ const CONFIG = {
 // ============================================
 
 const state = {
-    mode: 'wall', // 'wall' | 'edit'
+    mode: 'wall',
     cameraMode: '3d',
     snapping: true,
     
-    // Lasso Drawing State
+    // Drawing State
     isDrawing: false,
-    drawPoints: [], // Array of Vector3 points in the current chain
-    pendingWalls: [], // Temp wall meshes being drawn
+    drawPoints: [], // Array of Vector3 path points
     
     // Selection
     hoveredWall: null,
     selectedWall: null,
     
     // Data
-    walls: [], // Permanent wall meshes
+    walls: [], // Wall mesh objects
     floors: [],
-    wallSegments: [], // {start, end, wallId}
 };
 
 // ============================================
@@ -100,7 +96,7 @@ const camera = new THREE.PerspectiveCamera(
 camera.position.copy(CONFIG.CAM_3D_POS);
 camera.lookAt(0, 0, 0);
 
-// Camera transition state
+// Camera transition
 let cameraTransition = {
     active: false,
     startPos: new THREE.Vector3(),
@@ -163,23 +159,30 @@ const raycastPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0);
 // PREVIEW OBJECTS
 // ============================================
 
-// Current segment being drawn
-const ghostWallGeo = new THREE.BoxGeometry(1, CONFIG.WALL_HEIGHT, CONFIG.WALL_THICKNESS);
+// Ghost wall (extruded along path)
 const ghostWallMat = new THREE.MeshBasicMaterial({
-    color: CONFIG.COLOR_GHOST_DEFAULT,
+    color: CONFIG.COLOR_GHOST,
     transparent: true,
-    opacity: 0.5,
-    depthWrite: false
+    opacity: 0.4,
+    depthWrite: false,
+    side: THREE.DoubleSide
 });
-const ghostWall = new THREE.Mesh(ghostWallGeo, ghostWallMat);
-ghostWall.visible = false;
-ghostWall.position.y = CONFIG.WALL_HEIGHT / 2;
-scene.add(ghostWall);
+let ghostWall = null; // Created dynamically
+
+// Path line on ground
+const pathLineMat = new THREE.LineBasicMaterial({ 
+    color: CONFIG.COLOR_GHOST,
+    linewidth: 3
+});
+const pathLineGeo = new THREE.BufferGeometry();
+const pathLine = new THREE.Line(pathLineGeo, pathLineMat);
+pathLine.visible = false;
+scene.add(pathLine);
 
 // Snap indicator
 const snapIndicatorGeo = new THREE.RingGeometry(0.15, 0.25, 32);
 const snapIndicatorMat = new THREE.MeshBasicMaterial({ 
-    color: CONFIG.COLOR_GHOST_DEFAULT,
+    color: CONFIG.COLOR_GHOST,
     transparent: true,
     opacity: 0.8,
     side: THREE.DoubleSide
@@ -190,11 +193,11 @@ snapIndicator.visible = false;
 scene.add(snapIndicator);
 
 // Start point indicator
-const startPointGeo = new THREE.RingGeometry(0.2, 0.3, 32);
+const startPointGeo = new THREE.RingGeometry(0.25, 0.35, 32);
 const startPointMat = new THREE.MeshBasicMaterial({ 
     color: 0xffff00,
     transparent: true,
-    opacity: 0.6,
+    opacity: 0.7,
     side: THREE.DoubleSide
 });
 const startPointIndicator = new THREE.Mesh(startPointGeo, startPointMat);
@@ -210,23 +213,90 @@ selectionBox.visible = false;
 scene.add(selectionBox);
 
 // ============================================
-// WALL CREATION
+// WALL GEOMETRY CREATION
 // ============================================
 
-function createWallMesh(start, end, id, isGhost = false) {
-    const direction = new THREE.Vector3().subVectors(end, start);
-    const length = direction.length();
-    const center = new THREE.Vector3().addVectors(start, end).multiplyScalar(0.5);
+function createExtrudedWallGeometry(points, height, thickness) {
+    if (points.length < 2) return null;
     
-    const geometry = new THREE.BoxGeometry(length, CONFIG.WALL_HEIGHT, CONFIG.WALL_THICKNESS);
+    const vertices = [];
+    const indices = [];
+    const halfThick = thickness / 2;
+    
+    // Create vertices along the path with thickness
+    for (let i = 0; i < points.length; i++) {
+        const current = points[i];
+        
+        // Calculate direction
+        let direction;
+        if (i === 0) {
+            direction = new THREE.Vector3().subVectors(points[1], points[0]).normalize();
+        } else if (i === points.length - 1) {
+            direction = new THREE.Vector3().subVectors(points[i], points[i - 1]).normalize();
+        } else {
+            const prev = new THREE.Vector3().subVectors(points[i], points[i - 1]).normalize();
+            const next = new THREE.Vector3().subVectors(points[i + 1], points[i]).normalize();
+            direction = new THREE.Vector3().addVectors(prev, next).normalize();
+        }
+        
+        // Perpendicular vector (for thickness)
+        const perp = new THREE.Vector3(-direction.z, 0, direction.x);
+        
+        // Add vertices for this point (bottom and top, left and right)
+        const left = new THREE.Vector3().copy(current).addScaledVector(perp, -halfThick);
+        const right = new THREE.Vector3().copy(current).addScaledVector(perp, halfThick);
+        
+        // Bottom vertices
+        vertices.push(left.x, 0, left.z); // left bottom
+        vertices.push(right.x, 0, right.z); // right bottom
+        
+        // Top vertices
+        vertices.push(left.x, height, left.z); // left top
+        vertices.push(right.x, height, right.z); // right top
+    }
+    
+    // Create faces
+    for (let i = 0; i < points.length - 1; i++) {
+        const base = i * 4;
+        const next = (i + 1) * 4;
+        
+        // Front face (facing outward on left side)
+        indices.push(base, next + 2, base + 2);
+        indices.push(base, next, next + 2);
+        
+        // Back face (facing outward on right side)
+        indices.push(base + 1, base + 3, next + 3);
+        indices.push(base + 1, next + 3, next + 1);
+        
+        // Top face
+        indices.push(base + 2, next + 3, base + 3);
+        indices.push(base + 2, next + 2, next + 3);
+        
+        // Bottom face
+        indices.push(base, base + 1, next + 1);
+        indices.push(base, next + 1, next);
+    }
+    
+    const geometry = new THREE.BufferGeometry();
+    geometry.setAttribute('position', new THREE.Float32BufferAttribute(vertices, 3));
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    
+    return geometry;
+}
+
+function createWallFromPath(points, isGhost = false) {
+    const geometry = createExtrudedWallGeometry(points, CONFIG.WALL_HEIGHT, CONFIG.WALL_THICKNESS);
+    if (!geometry) return null;
     
     let material;
     if (isGhost) {
         material = new THREE.MeshBasicMaterial({
-            color: CONFIG.COLOR_GHOST_DEFAULT,
+            color: CONFIG.COLOR_GHOST,
             transparent: true,
-            opacity: 0.5,
-            depthWrite: false
+            opacity: 0.4,
+            depthWrite: false,
+            side: THREE.DoubleSide
         });
     } else {
         material = new THREE.MeshStandardMaterial({
@@ -237,9 +307,6 @@ function createWallMesh(start, end, id, isGhost = false) {
     }
     
     const wall = new THREE.Mesh(geometry, material);
-    wall.position.copy(center);
-    wall.position.y = CONFIG.WALL_HEIGHT / 2;
-    wall.lookAt(end);
     
     if (!isGhost) {
         wall.castShadow = true;
@@ -248,40 +315,20 @@ function createWallMesh(start, end, id, isGhost = false) {
     
     wall.userData = {
         type: 'wall',
-        start: start.clone(),
-        end: end.clone(),
-        id: id
+        points: points.map(p => p.clone()),
+        id: Date.now() + Math.random()
     };
     
     return wall;
 }
 
-function commitWall(start, end) {
-    const id = Date.now() + Math.random();
-    const wall = createWallMesh(start, end, id, false);
-    scene.add(wall);
-    
-    state.walls.push(wall);
-    state.wallSegments.push({ start: start.clone(), end: end.clone(), wallId: id });
-    
+function commitWall(points) {
+    const wall = createWallFromPath(points, false);
+    if (wall) {
+        scene.add(wall);
+        state.walls.push(wall);
+    }
     return wall;
-}
-
-function createPendingWall(start, end) {
-    const id = 'pending_' + Date.now() + Math.random();
-    const wall = createWallMesh(start, end, id, true);
-    scene.add(wall);
-    state.pendingWalls.push(wall);
-    return wall;
-}
-
-function clearPendingWalls() {
-    state.pendingWalls.forEach(wall => {
-        scene.remove(wall);
-        wall.geometry.dispose();
-        wall.material.dispose();
-    });
-    state.pendingWalls = [];
 }
 
 function deleteWall(wall) {
@@ -291,14 +338,9 @@ function deleteWall(wall) {
     wall.geometry.dispose();
     wall.material.dispose();
     
-    const wallIndex = state.walls.indexOf(wall);
-    if (wallIndex > -1) {
-        state.walls.splice(wallIndex, 1);
-    }
-    
-    const segIndex = state.wallSegments.findIndex(s => s.wallId === wall.userData.id);
-    if (segIndex > -1) {
-        state.wallSegments.splice(segIndex, 1);
+    const index = state.walls.indexOf(wall);
+    if (index > -1) {
+        state.walls.splice(index, 1);
     }
     
     if (state.selectedWall === wall) {
@@ -327,29 +369,37 @@ function selectWall(wall) {
 }
 
 // ============================================
-// FLOOR GENERATION (MULTIPLE LOOPS)
+// FLOOR GENERATION
 // ============================================
 
 function getVertexKey(v) {
     return `${v.x.toFixed(3)},${v.z.toFixed(3)}`;
 }
 
-function findAllClosedLoops() {
-    if (state.wallSegments.length < 2) return [];
-    
+function findClosedLoopsFromWalls() {
+    // Extract all endpoints from walls
     const vertices = new Map();
     const edges = [];
     
-    state.wallSegments.forEach(seg => {
-        const k1 = getVertexKey(seg.start);
-        const k2 = getVertexKey(seg.end);
+    state.walls.forEach(wall => {
+        const points = wall.userData.points;
+        if (points.length < 2) return;
         
-        if (!vertices.has(k1)) vertices.set(k1, seg.start.clone());
-        if (!vertices.has(k2)) vertices.set(k2, seg.end.clone());
-        
-        edges.push([k1, k2]);
+        // Add all consecutive point pairs as edges
+        for (let i = 0; i < points.length - 1; i++) {
+            const k1 = getVertexKey(points[i]);
+            const k2 = getVertexKey(points[i + 1]);
+            
+            if (!vertices.has(k1)) vertices.set(k1, points[i].clone());
+            if (!vertices.has(k2)) vertices.set(k2, points[i + 1].clone());
+            
+            edges.push([k1, k2]);
+        }
     });
     
+    if (edges.length === 0) return [];
+    
+    // Build adjacency
     const adj = new Map();
     vertices.forEach((_, key) => adj.set(key, []));
     
@@ -358,6 +408,7 @@ function findAllClosedLoops() {
         adj.get(k2).push(k1);
     });
     
+    // Find cycles
     const foundLoops = [];
     const processedStarts = new Set();
     
@@ -378,38 +429,24 @@ function findAllClosedLoops() {
                     return;
                 }
                 
-                if (!visited.has(neighbor) && path.length < 15) {
-                    const newPath = [...path, neighbor];
-                    const newVisited = new Set(visited);
-                    newVisited.add(neighbor);
-                    queue.push([neighbor, newPath, newVisited]);
+                if (!visited.has(neighbor) && path.length < 20) {
+                    queue.push([neighbor, [...path, neighbor], new Set([...visited, neighbor])]);
                 }
             }
         }
     });
     
-    return foundLoops;
+    return foundLoops.map(loop => loop.map(key => vertices.get(key)));
 }
 
-function generateFloorFromLoop(loopKeys) {
-    if (!loopKeys || loopKeys.length < 3) return null;
-    
-    const vertices = new Map();
-    state.wallSegments.forEach(seg => {
-        const k1 = getVertexKey(seg.start);
-        const k2 = getVertexKey(seg.end);
-        vertices.set(k1, seg.start);
-        vertices.set(k2, seg.end);
-    });
-    
-    const points = loopKeys.map(key => vertices.get(key));
-    if (points.some(p => !p)) return null;
+function generateFloorFromLoop(loopPoints) {
+    if (!loopPoints || loopPoints.length < 3) return null;
     
     const shape = new THREE.Shape();
-    shape.moveTo(points[0].x, points[0].z);
+    shape.moveTo(loopPoints[0].x, loopPoints[0].z);
     
-    for (let i = 1; i < points.length; i++) {
-        shape.lineTo(points[i].x, points[i].z);
+    for (let i = 1; i < loopPoints.length; i++) {
+        shape.lineTo(loopPoints[i].x, loopPoints[i].z);
     }
     shape.closePath();
     
@@ -442,7 +479,7 @@ function clearFloors() {
 function regenerateAllFloors() {
     clearFloors();
     
-    const loops = findAllClosedLoops();
+    const loops = findClosedLoopsFromWalls();
     
     loops.forEach(loop => {
         const floor = generateFloorFromLoop(loop);
@@ -456,10 +493,10 @@ function regenerateAllFloors() {
 }
 
 // ============================================
-// SNAPPING SYSTEM
+// SNAPPING
 // ============================================
 
-function snapPoint(point, referencePoint, checkEndpoints = true) {
+function snapPoint(point, referencePoint, canSnapToStart = false) {
     if (!state.snapping) return { point: point.clone(), didSnap: false };
     
     let snapped = point.clone();
@@ -486,28 +523,22 @@ function snapPoint(point, referencePoint, checkEndpoints = true) {
     }
     
     // Endpoint snapping
-    if (checkEndpoints) {
-        const snapCandidates = [];
-        state.wallSegments.forEach(seg => {
-            snapCandidates.push(seg.start, seg.end);
-        });
-        // Also check start point of current drawing
-        if (state.drawPoints.length > 0) {
-            snapCandidates.push(state.drawPoints[0]);
-        }
-        
-        for (const candidate of snapCandidates) {
-            const dist = Math.sqrt(
-                Math.pow(snapped.x - candidate.x, 2) + 
-                Math.pow(snapped.z - candidate.z, 2)
-            );
-            
-            if (dist < CONFIG.SNAP_DISTANCE) {
-                snapped.x = candidate.x;
-                snapped.z = candidate.z;
-                didSnap = true;
-                break;
-            }
+    const snapCandidates = [];
+    state.walls.forEach(wall => {
+        const points = wall.userData.points;
+        snapCandidates.push(points[0], points[points.length - 1]);
+    });
+    
+    if (canSnapToStart && state.drawPoints.length > 0) {
+        snapCandidates.push(state.drawPoints[0]);
+    }
+    
+    for (const candidate of snapCandidates) {
+        const dist = snapped.distanceTo(candidate);
+        if (dist < CONFIG.SNAP_DISTANCE) {
+            snapped.copy(candidate);
+            didSnap = true;
+            break;
         }
     }
     
@@ -543,8 +574,40 @@ function getWallIntersection(clientX, clientY) {
 }
 
 // ============================================
-// LASSO DRAWING
+// DRAWING
 // ============================================
+
+function updateGhostWall() {
+    // Remove old ghost
+    if (ghostWall) {
+        scene.remove(ghostWall);
+        ghostWall.geometry.dispose();
+        ghostWall = null;
+    }
+    
+    if (state.drawPoints.length < 2) return;
+    
+    // Create new ghost
+    ghostWall = createWallFromPath(state.drawPoints, true);
+    if (ghostWall) {
+        scene.add(ghostWall);
+    }
+}
+
+function updatePathLine() {
+    if (state.drawPoints.length < 2) {
+        pathLine.visible = false;
+        return;
+    }
+    
+    const positions = [];
+    state.drawPoints.forEach(p => {
+        positions.push(p.x, 0.05, p.z);
+    });
+    
+    pathLine.geometry.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+    pathLine.visible = true;
+}
 
 function startDrawing(point) {
     state.isDrawing = true;
@@ -557,11 +620,6 @@ function startDrawing(point) {
     startPointIndicator.visible = true;
     startPointIndicator.material.color.setHex(0xffff00);
     startPointIndicator.scale.set(1, 1, 1);
-    
-    // Show ghost wall for first segment
-    ghostWall.visible = true;
-    
-    updateDebugPanel();
 }
 
 function updateDrawing(currentPoint) {
@@ -570,45 +628,34 @@ function updateDrawing(currentPoint) {
     const lastPoint = state.drawPoints[state.drawPoints.length - 1];
     
     // Snap the current point
-    const { point: snappedPoint, didSnap } = snapPoint(currentPoint, lastPoint);
+    const canSnapToStart = state.drawPoints.length > 2;
+    const { point: snappedPoint, didSnap } = snapPoint(currentPoint, lastPoint, canSnapToStart);
     
-    // Update visual feedback
+    // Update indicators
     snapIndicator.position.set(snappedPoint.x, 0.06, snappedPoint.z);
     snapIndicator.visible = didSnap;
+    snapIndicator.material.color.setHex(didSnap ? CONFIG.COLOR_GHOST_SNAP : CONFIG.COLOR_GHOST);
     
-    if (didSnap) {
+    if (didSnap && ghostWall) {
         ghostWall.material.color.setHex(CONFIG.COLOR_GHOST_SNAP);
-        snapIndicator.material.color.setHex(CONFIG.COLOR_GHOST_SNAP);
-    } else {
-        ghostWall.material.color.setHex(CONFIG.COLOR_GHOST_DEFAULT);
-        snapIndicator.material.color.setHex(CONFIG.COLOR_GHOST_DEFAULT);
+    } else if (ghostWall) {
+        ghostWall.material.color.setHex(CONFIG.COLOR_GHOST);
     }
     
-    // Check if we should create a new segment
+    // Add point if far enough from last
     const distFromLast = lastPoint.distanceTo(snappedPoint);
-    
-    if (distFromLast >= CONFIG.SEGMENT_THRESHOLD) {
-        // Commit the segment from lastPoint to snappedPoint
-        createPendingWall(lastPoint, snappedPoint);
+    if (distFromLast >= CONFIG.MIN_POINT_DISTANCE) {
         state.drawPoints.push(snappedPoint.clone());
-    }
-    
-    // Update ghost wall from last committed point to current
-    const direction = new THREE.Vector3().subVectors(snappedPoint, lastPoint);
-    const length = direction.length();
-    
-    if (length > 0.01) {
-        const center = new THREE.Vector3().addVectors(lastPoint, snappedPoint).multiplyScalar(0.5);
-        ghostWall.scale.set(Math.max(length, 0.1), 1, 1);
-        ghostWall.position.copy(center);
-        ghostWall.position.y = CONFIG.WALL_HEIGHT / 2;
-        ghostWall.lookAt(snappedPoint);
-        ghostWall.visible = true;
+        updateGhostWall();
+        updatePathLine();
     } else {
-        ghostWall.visible = false;
+        // Update last point for visual feedback
+        state.drawPoints[state.drawPoints.length - 1] = snappedPoint.clone();
+        updateGhostWall();
+        updatePathLine();
     }
     
-    // Check for loop closing (near start point)
+    // Check for loop closing
     if (state.drawPoints.length > 2) {
         const distToStart = snappedPoint.distanceTo(state.drawPoints[0]);
         if (distToStart < CONFIG.SNAP_DISTANCE) {
@@ -627,40 +674,35 @@ function finishDrawing() {
     state.isDrawing = false;
     controls.enabled = true;
     
-    // Commit all pending walls
-    state.pendingWalls.forEach(wall => {
-        const start = wall.userData.start;
-        const end = wall.userData.end;
-        
-        // Remove ghost
-        scene.remove(wall);
-        wall.geometry.dispose();
-        wall.material.dispose();
-        
-        // Create real wall
-        commitWall(start, end);
-    });
-    
-    // Check if we should close the loop
+    // Check if should close loop
     if (state.drawPoints.length > 2) {
         const lastPoint = state.drawPoints[state.drawPoints.length - 1];
         const firstPoint = state.drawPoints[0];
         const distToStart = lastPoint.distanceTo(firstPoint);
         
-        if (distToStart < CONFIG.SNAP_DISTANCE && distToStart > CONFIG.MIN_SEGMENT_LENGTH) {
-            // Close the loop
-            commitWall(lastPoint, firstPoint);
+        if (distToStart < CONFIG.SNAP_DISTANCE) {
+            // Close the loop by snapping last point to first
+            state.drawPoints[state.drawPoints.length - 1] = firstPoint.clone();
         }
     }
     
-    // Clear state
-    state.pendingWalls = [];
+    // Commit if valid
+    if (state.drawPoints.length >= 2) {
+        commitWall(state.drawPoints);
+        regenerateAllFloors();
+    }
+    
+    // Cleanup
+    if (ghostWall) {
+        scene.remove(ghostWall);
+        ghostWall = null;
+    }
+    
     state.drawPoints = [];
-    ghostWall.visible = false;
+    pathLine.visible = false;
     snapIndicator.visible = false;
     startPointIndicator.visible = false;
     
-    regenerateAllFloors();
     updateDebugPanel();
 }
 
@@ -670,11 +712,13 @@ function cancelDrawing() {
     state.isDrawing = false;
     controls.enabled = true;
     
-    // Clear all pending walls
-    clearPendingWalls();
+    if (ghostWall) {
+        scene.remove(ghostWall);
+        ghostWall = null;
+    }
     
     state.drawPoints = [];
-    ghostWall.visible = false;
+    pathLine.visible = false;
     snapIndicator.visible = false;
     startPointIndicator.visible = false;
 }
@@ -690,7 +734,7 @@ function onMouseDown(event) {
     if (state.mode === 'wall') {
         const point = getGroundIntersection(event.clientX, event.clientY);
         if (point) {
-            const { point: snappedPoint } = snapPoint(point, null, true);
+            const { point: snappedPoint } = snapPoint(point, null, false);
             startDrawing(snappedPoint);
         }
     } else if (state.mode === 'edit') {
@@ -826,10 +870,8 @@ function clearAll() {
     state.walls.forEach(wall => {
         scene.remove(wall);
         wall.geometry.dispose();
-        wall.material.dispose();
     });
     state.walls = [];
-    state.wallSegments = [];
     state.selectedWall = null;
     selectionBox.visible = false;
     
@@ -852,7 +894,7 @@ window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
 });
 
-// UI Event Listeners
+// UI
 document.getElementById('mode-wall').addEventListener('click', () => {
     state.mode = 'wall';
     if (state.selectedWall) {
@@ -907,4 +949,4 @@ updateUI();
 updateDebugPanel();
 animate();
 
-console.log('Freeform Builder - Phase 1 (Lasso Drawing) initialized');
+console.log('Freeform Builder - Phase 1 (Extruded Walls) initialized');
